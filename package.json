@@ -1,0 +1,31 @@
+{
+  "name": "@ace-ify/copilot-claude-proxy",
+  "version": "1.0.4",
+  "type": "module",
+  "description": "Local compatibility proxy that accepts Anthropic-style POST /v1/messages calls and forwards them to GitHub Copilot's OpenAI-compatible endpoint. Ideal for using Claude Code with Copilot models.",
+  "main": "src/server.js",
+  "bin": {
+    "copilot-claude-proxy": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "keywords": [
+    "copilot",
+    "claude",
+    "proxy",
+    "anthropic",
+    "github",
+    "ai",
+    "openai-compatible"
+  ],
+  "author": "Naimish Singh",
+  "license": "MIT"
+}

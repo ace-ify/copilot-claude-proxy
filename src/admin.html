@@ -1,0 +1,1033 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Copilot Claude Proxy</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'Menlo', 'monospace'],
+            display: ['Space Grotesk', 'sans-serif'],
+          },
+          colors: {
+            app: {
+              void: '#000000',
+              primary: '#050505',
+              elevated: '#0a0a0a',
+              subtle: '#111111',
+              accent: '#00f3ff',
+              accentHover: '#00d0db',
+              text: '#ffffff',
+              textMuted: '#a1a1aa',
+              textGhost: '#52525b',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    :root {
+      --accent: #00f3ff;
+      --accent-alpha-10: rgba(0, 243, 255, 0.1);
+      --accent-alpha-20: rgba(0, 243, 255, 0.2);
+      --accent-alpha-40: rgba(0, 243, 255, 0.4);
+      --accent-alpha-50: rgba(0, 243, 255, 0.5);
+      --accent-alpha-60: rgba(0, 243, 255, 0.6);
+    }
+
+    body {
+      background-color: var(--app-void, #000);
+      color: #ededed;
+      min-height: 100vh;
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+    /* Custom Cursor */
+    * {
+      cursor: none !important;
+    }
+
+    /* Visual Effects */
+    .tech-grid {
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+
+    .glass {
+      background: rgba(255, 255, 255, 0.02);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      box-shadow: 0 4px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .neon-text {
+      text-shadow: 
+        0 0 10px currentColor,
+        0 0 20px var(--accent-alpha-40);
+    }
+
+    .neon-border {
+      border: 1px solid var(--accent);
+      box-shadow: 
+        0 0 10px var(--accent-alpha-20),
+        inset 0 0 10px var(--accent-alpha-10);
+      transition: all 0.3s ease;
+    }
+    
+    .neon-border:hover:not(:disabled) {
+      box-shadow: 
+        0 0 20px var(--accent-alpha-40),
+        inset 0 0 20px var(--accent-alpha-20);
+      border-color: #fff;
+    }
+
+    .spring-hover {
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .spring-hover:hover:not(:disabled) {
+      transform: scale(1.02);
+    }
+    .spring-hover:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    /* 3D Animations & Elements */
+    @keyframes dash {
+      to {
+        stroke-dashoffset: -20;
+      }
+    }
+    
+    .perspective-1000 {
+      perspective: 1000px;
+    }
+    .transform-style-preserve-3d {
+      transform-style: preserve-3d;
+    }
+    .rotate-x-60 {
+      transform: rotateX(60deg);
+    }
+    .rotate-y-60 {
+      transform: rotateY(60deg);
+    }
+
+    /* Layout */
+    .layout-grid {
+      display: grid;
+      gap: 1.5rem;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas:
+        "controls"
+        "snapshot"
+        "logs";
+      align-items: start;
+    }
+
+    .area-controls { grid-area: controls; }
+    .area-snapshot { grid-area: snapshot; }
+    .area-logs { grid-area: logs; }
+
+    @media (min-width: 1024px) {
+      .layout-grid {
+        grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+        grid-template-areas:
+          "controls snapshot"
+          "logs snapshot";
+      }
+      .sticky-rail {
+        position: sticky;
+        top: 3rem;
+        max-height: calc(100vh - 6rem);
+      }
+    }
+
+    /* Animations */
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .stagger-container > * {
+      opacity: 0;
+      animation: fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .stagger-container > *:nth-child(1) { animation-delay: 0.1s; }
+    .stagger-container > *:nth-child(2) { animation-delay: 0.2s; }
+    .stagger-container > *:nth-child(3) { animation-delay: 0.3s; }
+    .stagger-container > *:nth-child(4) { animation-delay: 0.4s; }
+
+    /* Terminal logs */
+    .terminal-log-line {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      padding: 4px 8px;
+      border-left: 2px solid transparent;
+      transition: background 0.2s;
+    }
+    .terminal-log-line:hover {
+      border-left-color: var(--accent);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    /* Buttons & Inputs */
+    .mono-btn {
+      font-family: 'Space Grotesk', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body class="antialiased tech-grid selection:bg-app-accent selection:text-black p-4 sm:p-6 lg:p-12">
+  <div id="root" class="w-full max-w-[1500px] mx-auto"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CustomCursor = () => {
+      const cursorRef = useRef(null);
+      const dotRef = useRef(null);
+
+      useEffect(() => {
+        const updateCursor = (e) => {
+          if (cursorRef.current) {
+            cursorRef.current.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
+          }
+        };
+        
+        const handleMouseOver = (e) => {
+          if (dotRef.current) {
+            if (e.target.closest('button, a, select, input, .cursor-pointer, .glass')) {
+              dotRef.current.classList.add('scale-[2]', 'bg-app-accent');
+              dotRef.current.classList.remove('bg-white');
+            } else {
+              dotRef.current.classList.remove('scale-[2]', 'bg-app-accent');
+              dotRef.current.classList.add('bg-white');
+            }
+          }
+        };
+
+        window.addEventListener('mousemove', updateCursor, { passive: true });
+        window.addEventListener('mouseover', handleMouseOver, { passive: true });
+        return () => {
+          window.removeEventListener('mousemove', updateCursor);
+          window.removeEventListener('mouseover', handleMouseOver);
+        };
+      }, []);
+
+      return (
+        <div 
+          ref={cursorRef} 
+          className="fixed top-0 left-0 pointer-events-none z-[100000] -ml-[4px] -mt-[4px]"
+          style={{ willChange: 'transform' }}
+        >
+          <div ref={dotRef} className="w-2 h-2 bg-white rounded-full shadow-[0_0_8px_currentColor] transition-all duration-200 ease-out" />
+        </div>
+      );
+    };
+
+    const App = () => {
+      const [isBooting, setIsBooting] = useState(true);
+      const [status, setStatus] = useState(null);
+      const [models, setModels] = useState([]);
+      const [authStatus, setAuthStatus] = useState(null);
+      const [pendingAuth, setPendingAuth] = useState(null);
+      const [isPollingAuth, setIsPollingAuth] = useState(false);
+      const [selectedModel, setSelectedModel] = useState('');
+      const [isLoading, setIsLoading] = useState(true);
+      const [isSwitching, setIsSwitching] = useState(false);
+      const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
+      const [liveState, setLiveState] = useState(null);
+      const [traceState, setTraceState] = useState(null);
+      const [logEvents, setLogEvents] = useState([]);
+      const [trafficHistory, setTrafficHistory] = useState(Array(20).fill(0));
+      const [logFilters, setLogFilters] = useState({
+        info: true,
+        debug: true,
+        error: true,
+        auth: true,
+        routing: true
+      });
+      const [logsPaused, setLogsPaused] = useState(false);
+      const logIdRef = useRef(0);
+      const [error, setError] = useState(null);
+
+      const fetchData = async () => {
+        setIsLoading(true);
+        setError(null);
+        try {
+          const [statusRes, modelsRes, authRes] = await Promise.all([
+            fetch('/admin/status'),
+            fetch('/admin/models'),
+            fetch('/admin/auth/status')
+          ]);
+          if (!statusRes.ok) throw new Error('Failed to fetch status');
+          if (!modelsRes.ok) throw new Error('Failed to fetch models');
+          if (!authRes.ok) throw new Error('Failed to fetch auth status');
+
+          const statusData = await statusRes.json();
+          const modelsData = await modelsRes.json();
+          const authData = await authRes.json();
+
+          setStatus(statusData);
+          setAuthStatus(authData);
+
+          const modelsList = Array.isArray(modelsData?.models) ? modelsData.models : [];
+          setModels(modelsList);
+
+          const targetSelected = modelsData?.selected_model || modelsData?.default_model || (modelsList[0]?.id || '');
+          setSelectedModel(targetSelected);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        fetchData();
+        setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 100);
+        const bootTimer = setTimeout(() => setIsBooting(false), 2000);
+        return () => clearTimeout(bootTimer);
+      }, []);
+
+      useEffect(() => {
+        if (window.lucide) window.lucide.createIcons();
+      });
+
+      useEffect(() => {
+        const pollDiagnostics = async () => {
+          try {
+            const [liveRes, traceRes] = await Promise.all([
+              fetch('/admin/live'),
+              fetch('/admin/trace')
+            ]);
+            if (!liveRes.ok || !traceRes.ok) return;
+
+            const live = await liveRes.json();
+            const trace = await traceRes.json();
+
+            setLiveState(live);
+            setTraceState(trace);
+
+            const now = new Date().toLocaleTimeString();
+            const items = [];
+
+            if (live?.active) {
+              items.push({
+                id: ++logIdRef.current,
+                ts: now,
+                level: 'info',
+                type: 'routing',
+                message: `Active request: ${live.request_id || 'unknown'} | model=${live.model || 'n/a'} | events=${live.events_seen ?? 0}`
+              });
+            }
+
+            if (live?.error) {
+              items.push({
+                id: ++logIdRef.current,
+                ts: now,
+                level: 'error',
+                type: 'routing',
+                message: `Live error: ${live.error}`
+              });
+            }
+
+            if (live?.last_event_type) {
+              items.push({
+                id: ++logIdRef.current,
+                ts: now,
+                level: 'debug',
+                type: 'routing',
+                message: `Event: ${live.last_event_type}`
+              });
+            }
+
+            if (trace?.note) {
+              const isAuthNote = /auth|oauth|token|device_code|authorization/i.test(trace.note || '');
+              items.push({
+                id: ++logIdRef.current,
+                ts: now,
+                level: trace?.error ? 'error' : 'debug',
+                type: isAuthNote ? 'auth' : 'routing',
+                message: `Trace: ${trace.note} | mode=${trace?.mode || 'n/a'} | model=${trace?.model || 'n/a'}`
+              });
+            }
+
+            if (trace?.response_tool_use_count > 0) {
+              items.push({
+                id: ++logIdRef.current,
+                ts: now,
+                level: 'info',
+                type: 'routing',
+                message: `Tools used: ${trace.response_tool_use_count}`
+              });
+            }
+
+            if (trace?.request_tools_count > 0) {
+              items.push({
+                id: ++logIdRef.current,
+                ts: now,
+                level: 'debug',
+                type: 'routing',
+                message: `Request tools declared: ${trace.request_tools_count}`
+              });
+            }
+
+            if (items.length && !logsPaused) {
+              setLogEvents((prev) => [...prev, ...items].slice(-250));
+            }
+
+            // Simulate traffic volume based on events and active state
+            const activityScore = items.length * 15 + (live?.active ? 30 : 0);
+            setTrafficHistory((prev) => [...prev.slice(1), activityScore]);
+          } catch {
+            // silent polling failure
+          }
+        };
+
+        pollDiagnostics();
+        const interval = setInterval(pollDiagnostics, 3000);
+        return () => clearInterval(interval);
+      }, [logsPaused]);
+
+      const startAuth = async () => {
+        setIsPollingAuth(true);
+        setError(null);
+        try {
+          const res = await fetch('/admin/auth/start', { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data?.error?.message || 'Failed to start auth');
+
+          setPendingAuth({
+            userCode: data.user_code,
+            verificationUri: data.verification_uri
+          });
+
+          pollAuth();
+        } catch (err) {
+          setError(err.message);
+          setIsPollingAuth(false);
+        }
+      };
+
+      const pollAuth = async () => {
+        try {
+          const res = await fetch('/admin/auth/poll', { method: 'POST' });
+          const data = await res.json();
+
+          if (!res.ok || data?.status === 'pending') {
+            if (data?.status === 'pending' || data?.error?.type === 'authorization_pending') {
+              const retrySec = data?.retry_after_sec || 5;
+              setTimeout(pollAuth, retrySec * 1000);
+            } else {
+              throw new Error(data?.error?.message || 'Authentication failed');
+            }
+            return;
+          }
+
+          setPendingAuth(null);
+          setIsPollingAuth(false);
+          await fetchData();
+        } catch (err) {
+          setError(err.message);
+          setPendingAuth(null);
+          setIsPollingAuth(false);
+        }
+      };
+
+      const handleSwitchMode = async (mode) => {
+        setIsSwitching(true);
+        setError(null);
+        try {
+          const res = await fetch('/admin/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode, model: selectedModel })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data?.error?.message || 'Failed to switch mode');
+          await fetchData();
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setIsSwitching(false);
+        }
+      };
+
+      const refreshAuth = async () => {
+        setIsRefreshingAuth(true);
+        setError(null);
+        try {
+          const res = await fetch('/admin/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: 'oauth' })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data?.error?.message || 'Failed to refresh Copilot auth');
+          await fetchData();
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setIsRefreshingAuth(false);
+        }
+      };
+
+      const isProxyActive = status?.mode === 'proxy';
+
+      const toggleFilter = (key) => {
+        setLogFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+      };
+
+      const visibleLogs = logEvents.filter((entry) => {
+        const levelAllowed = logFilters[entry.level] !== false;
+        const typeAllowed = entry.type ? logFilters[entry.type] !== false : true;
+        return levelAllowed && typeAllowed;
+      });
+
+      const filterChips = [
+        { key: 'info', label: 'Info' },
+        { key: 'debug', label: 'Debug' },
+        { key: 'error', label: 'Error' },
+        { key: 'auth', label: 'Auth' },
+        { key: 'routing', label: 'Routing' }
+      ];
+
+      // Dynamic sparkline calculation
+      const maxTraffic = Math.max(...trafficHistory, 50);
+      const sparklinePoints = trafficHistory.map((val, i) => {
+        const x = (i / (trafficHistory.length - 1)) * 100;
+        const y = 28 - (val / maxTraffic) * 24; // 28 is near bottom, 4 is near top
+        return `${x},${y}`;
+      }).join(' L ');
+      
+      const sparklineFill = `M 0,30 L ${sparklinePoints} L 100,30 Z`;
+      const sparklineStroke = `M ${sparklinePoints}`;
+      const lastPoint = sparklinePoints.split(' L ').pop().split(',');
+
+      // Dynamic 3D Node variables
+      const isNodeError = liveState?.error;
+      const isNodeActive = liveState?.active;
+      const nodeColor = isNodeError ? 'red-500' : 'app-accent';
+      const nodeSpinSpeed = isNodeActive ? 'spin_3s_linear_infinite' : 'spin_10s_linear_infinite';
+      const nodeLabel = isNodeError ? 'ERROR' : (isNodeActive ? 'ROUTING' : 'IDLE');
+
+      return (
+        <>
+          <CustomCursor />
+
+          {/* Custom Fullscreen Preloader */}
+          {isBooting && (
+            <div className="fixed inset-0 z-[50000] bg-app-void tech-grid flex flex-col items-center justify-center transition-opacity duration-500 ease-out">
+              {/* Spinning 3D Tech Node */}
+              <div className="relative w-32 h-32 perspective-1000 mb-8">
+                <div className="w-full h-full absolute transform-style-preserve-3d animate-[spin_4s_linear_infinite]">
+                  <div className="absolute inset-0 border border-app-accent/40 rounded-full rotate-x-60 shadow-[0_0_15px_var(--accent-alpha-20)]"></div>
+                  <div className="absolute inset-0 border border-app-accent/20 rounded-full rotate-y-60 shadow-[0_0_15px_var(--accent-alpha-20)]"></div>
+                  <div className="absolute inset-8 bg-gradient-to-tr from-app-accent/10 to-app-accent/40 backdrop-blur-md rounded-full flex items-center justify-center shadow-[0_0_20px_var(--accent-alpha-50)] border border-app-accent/30">
+                    <div className="w-3 h-3 bg-white rounded-full shadow-[0_0_15px_#fff] animate-pulse"></div>
+                  </div>
+                </div>
+              </div>
+              <div className="text-app-accent font-display font-bold tracking-[0.3em] uppercase text-sm mb-3 neon-text">Initializing Proxy</div>
+              <div className="flex items-center gap-2 text-zinc-500 font-mono text-[10px] uppercase tracking-widest bg-black/40 px-3 py-1.5 rounded-full border border-white/5 shadow-inner">
+                <i data-lucide="cpu" className="w-3.5 h-3.5 text-app-accent animate-pulse"></i>
+                Establishing Uplink...
+              </div>
+            </div>
+          )}
+
+          <div className={`layout-grid w-full transition-all duration-1000 ${isBooting ? 'opacity-0 scale-95 blur-sm' : 'opacity-100 scale-100 blur-0 stagger-container'}`}>
+
+          {/* A: Left proxy controls */}
+          <div className="space-y-6 area-controls">
+            <div className="glass rounded-2xl p-6 sm:p-8 relative overflow-hidden group">
+              
+              {/* Subtle accent glow in the background */}
+              <div className="absolute top-0 right-0 w-64 h-64 bg-app-accent/10 rounded-full blur-3xl -z-10 pointer-events-none opacity-50 group-hover:opacity-80 transition-opacity duration-1000" />
+
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 relative z-10">
+                <div>
+                  <h1 className="text-4xl font-display font-bold tracking-tight text-white mb-2 flex items-center gap-3">
+                    <i data-lucide="cpu" className="w-8 h-8 text-app-accent"></i>
+                    GITHUB CLAUDE PROXY
+                  </h1>
+                  <p className="text-zinc-400 text-sm sm:text-base max-w-lg leading-relaxed">
+                    Bridge routing Anthropic-style requests to GitHub-hosted OpenAI-compatible models seamlessly.
+                  </p>
+                </div>
+
+                <div className="mt-4 sm:mt-0 px-4 py-1.5 rounded-full bg-black/40 border border-white/10 text-xs font-mono text-zinc-300 shadow-inner flex items-center gap-2 backdrop-blur-md">
+                  <div className={`w-2 h-2 rounded-full ${isProxyActive ? "bg-app-accent shadow-[0_0_8px_var(--accent)] animate-pulse" : "bg-zinc-600"}`}></div>
+                  v1.0.4
+                </div>
+              </div>
+
+              {error && (
+                <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 text-red-200 relative z-10">
+                  <i data-lucide="alert-triangle" className="w-5 h-5 shrink-0 mt-0.5 text-red-400"></i>
+                  <div className="text-sm font-mono">{error}</div>
+                </div>
+              )}
+
+              {/* Auth Section */}
+              <div className="mb-6 relative z-10">
+                {authStatus && (
+                  <div className="p-5 rounded-xl bg-black/40 border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 backdrop-blur-sm hover:border-white/20 transition-colors">
+                    <div className="flex gap-4 text-zinc-200 items-center min-w-0">
+                      <div className="p-2.5 bg-app-accent/10 rounded-lg shrink-0">
+                        <i data-lucide={authStatus?.runtime?.has_token ? "shield-check" : "key"} className={`w-5 h-5 ${authStatus?.runtime?.has_token ? "text-emerald-400" : "text-app-accent"}`}></i>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-display font-bold uppercase tracking-wide text-white truncate">
+                          {authStatus?.runtime?.has_token ? "GitHub Copilot Connected" : "GitHub Copilot Disconnected"}
+                        </div>
+                        <div className="text-sm text-zinc-400 mt-1 truncate">
+                          {authStatus?.runtime?.has_token 
+                            ? `Authenticated via ${authStatus?.runtime?.token_source || 'saved session'}`
+                            : "Authentication required to bridge requests."}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {!authStatus?.runtime?.has_token && !pendingAuth && (
+                        <button
+                          onClick={startAuth}
+                          disabled={isPollingAuth}
+                          className="mono-btn px-5 py-3 rounded-lg font-bold text-xs bg-white text-black hover:bg-zinc-200 transition-all spring-hover disabled:opacity-50 shadow-[0_0_15px_rgba(255,255,255,0.2)]"
+                        >
+                          {isPollingAuth ? 'Connecting...' : 'Connect Copilot'}
+                        </button>
+                      )}
+                      {authStatus?.runtime?.has_token && !pendingAuth && (
+                        <button
+                          onClick={startAuth}
+                          disabled={isPollingAuth}
+                          className="mono-btn px-4 py-2.5 rounded-lg font-bold text-[10px] border border-white/10 text-zinc-400 hover:text-white hover:bg-white/5 transition-all spring-hover"
+                        >
+                          Reconnect
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {pendingAuth && (
+                  <div className="p-6 rounded-xl bg-black/60 border border-app-accent/30 flex flex-col gap-4 text-zinc-200 backdrop-blur-md neon-box animate-[fade-in_0.3s_ease-out]">
+                    <div className="flex items-center gap-3 font-display font-bold uppercase text-app-accent">
+                      <i data-lucide="loader-2" className="w-5 h-5 animate-spin"></i>
+                      Awaiting Authorization
+                    </div>
+                    <div className="text-sm space-y-4 ml-1">
+                      <div className="flex flex-col gap-2">
+                        <span className="text-zinc-400">1. Copy your verification code:</span>
+                        <code className="bg-black/50 px-5 py-3 rounded-lg font-mono text-app-accent text-xl tracking-[0.2em] font-bold self-start select-all border border-app-accent/20 neon-text">
+                          {pendingAuth.userCode}
+                        </code>
+                      </div>
+                      <div className="text-zinc-400 flex flex-col gap-1">
+                        <span>2. Open the verification portal:</span>
+                        <a href={pendingAuth.verificationUri} target="_blank" rel="noreferrer" className="text-white hover:text-app-accent transition-colors underline underline-offset-4 flex items-center gap-1.5 w-max">
+                          {pendingAuth.verificationUri} <i data-lucide="external-link" className="w-3.5 h-3.5"></i>
+                        </a>
+                      </div>
+                      <div className="text-zinc-400">3. Paste the code and authorize the app.</div>
+                    </div>
+                  </div>
+                )}
+
+                {authStatus?.ensure_error && (
+                  <div className="p-4 rounded-xl bg-black/40 border border-amber-500/20 text-zinc-200 text-sm mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <div className="font-display font-bold text-amber-400 flex items-center gap-2">
+                        <i data-lucide="alert-triangle" className="w-4 h-4"></i>
+                        Token Refresh Issue
+                      </div>
+                      <div className="text-zinc-400 mt-1 break-all font-mono text-xs">{authStatus.ensure_error}</div>
+                    </div>
+                    <button
+                      onClick={refreshAuth}
+                      disabled={isRefreshingAuth}
+                      className="shrink-0 mono-btn px-4 py-2 rounded-lg font-semibold text-xs border border-amber-500/30 hover:bg-amber-500/10 transition-all text-amber-400 disabled:opacity-60 spring-hover"
+                    >
+                      {isRefreshingAuth ? 'Refreshing...' : 'Force Refresh'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Controls Section */}
+              <div className="bg-black/40 rounded-xl border border-white/10 p-6 space-y-6 relative z-10 backdrop-blur-sm">
+                <div>
+                  <label className="block text-xs font-display font-bold uppercase tracking-wider text-zinc-400 mb-3 ml-1">Target Model</label>
+                  <div className="relative group">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <i data-lucide="box" className="w-4 h-4 text-app-accent opacity-70 group-hover:opacity-100 transition-opacity"></i>
+                    </div>
+                    <select
+                      className="w-full bg-black/50 border border-white/10 text-white text-sm rounded-lg focus:ring-1 focus:ring-app-accent focus:border-app-accent block pl-11 pr-10 py-3.5 appearance-none cursor-pointer transition-all font-mono hover:bg-black/80"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      disabled={isLoading || isSwitching}
+                    >
+                      {models.length === 0 ? (
+                        <option value="">Loading models...</option>
+                      ) : (
+                        models.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.vendor ? `[${m.vendor}] ` : ""}{m.id}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                      <i data-lucide="chevron-down" className="w-4 h-4 text-zinc-500"></i>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={() => handleSwitchMode('proxy')}
+                    disabled={isLoading || isSwitching}
+                    className={`flex-1 flex items-center justify-center gap-2 mono-btn rounded-lg py-3.5 px-4 text-xs font-bold transition-all focus:outline-none disabled:opacity-50 spring-hover ${isProxyActive ? 'bg-app-accent/10 text-app-accent border border-app-accent/50 neon-border' : 'bg-white text-black hover:bg-zinc-200 shadow-[0_0_15px_rgba(255,255,255,0.1)] hover:shadow-[0_0_20px_rgba(255,255,255,0.2)]'}`}
+                  >
+                    {isSwitching ? <i data-lucide="loader-2" className="w-4 h-4 animate-spin"></i> : <i data-lucide="zap" className="w-4 h-4"></i>}
+                    {isProxyActive ? 'Proxy Active' : 'Enable Proxy'}
+                  </button>
+
+                  <button
+                    onClick={() => handleSwitchMode('native')}
+                    disabled={isLoading || isSwitching}
+                    className={`flex-1 flex items-center justify-center gap-2 mono-btn rounded-lg py-3.5 px-4 text-xs font-bold transition-all focus:outline-none disabled:opacity-50 spring-hover ${!isProxyActive ? 'bg-zinc-800 text-white border border-zinc-600 shadow-[0_0_15px_rgba(255,255,255,0.05)]' : 'bg-transparent border border-white/10 text-zinc-400 hover:text-white hover:bg-white/5 hover:border-white/20'}`}
+                  >
+                    <i data-lucide="rotate-ccw" className="w-4 h-4"></i>
+                    Revert to Native
+                  </button>
+
+                  <button
+                    onClick={fetchData}
+                    disabled={isLoading || isSwitching}
+                    className="sm:flex-none flex items-center justify-center mono-btn rounded-lg p-3.5 border border-white/10 bg-black/40 text-zinc-400 hover:text-white hover:bg-white/10 transition-all disabled:opacity-50 spring-hover group"
+                    title="Refresh Status"
+                  >
+                    <i data-lucide="refresh-cw" className={`w-4 h-4 ${isLoading ? "animate-spin text-app-accent" : "group-hover:rotate-180 transition-transform duration-500"}`}></i>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          {/* B: Right system snapshot - Bento Grid System */}
+          <div className="sticky-rail area-snapshot flex flex-col gap-6">
+            {/* Top Row: Core Status */}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Network State */}
+              <div className="glass rounded-xl p-5 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity duration-500">
+                  <i data-lucide="activity" className="w-16 h-16 text-white"></i>
+                </div>
+                <div className="text-[10px] font-display uppercase tracking-[0.2em] text-zinc-500 mb-2">Network State</div>
+                <div className="text-lg font-mono text-white flex items-center gap-2 mb-3">
+                  <div className={`w-2.5 h-2.5 rounded-full ${isProxyActive ? 'bg-app-accent shadow-[0_0_10px_var(--accent)] animate-pulse' : 'bg-zinc-600'}`} />
+                  {isProxyActive ? 'ROUTING' : 'IDLE'}
+                </div>
+                <div className="text-[10px] text-zinc-500 font-mono mt-auto flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded w-max border border-white/5 max-w-full">
+                  <i data-lucide="hash" className="w-3 h-3 shrink-0"></i>
+                  <span className="truncate">{liveState?.active ? (liveState.request_id?.split('-')[0] || 'active') + '...' : 'No active request'}</span>
+                </div>
+              </div>
+
+              {/* Upstream Health */}
+              <div className={`glass rounded-xl p-5 relative overflow-hidden group transition-colors ${liveState?.error ? 'border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : ''}`}>
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity duration-500">
+                  <i data-lucide={liveState?.error ? 'alert-triangle' : 'shield-check'} className={`w-16 h-16 ${liveState?.error ? 'text-red-500' : 'text-white'}`}></i>
+                </div>
+                <div className="text-[10px] font-display uppercase tracking-[0.2em] text-zinc-500 mb-2">Upstream Health</div>
+                <div className={`text-lg font-mono flex items-center gap-2 mb-3 ${liveState?.error ? 'text-red-400' : 'text-emerald-400'}`}>
+                  <div className={`w-2.5 h-2.5 rounded-full ${liveState?.error ? 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.6)] animate-pulse' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.6)]'}`} />
+                  {liveState?.error ? 'ERROR' : 'OPTIMAL'}
+                </div>
+                <div className="text-[10px] text-zinc-500 font-mono mt-auto flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded w-max border border-white/5 max-w-full" title={liveState?.error || 'Connected to GitHub Copilot'}>
+                  <i data-lucide={liveState?.error ? 'alert-circle' : 'check-circle-2'} className="w-3 h-3 shrink-0"></i>
+                  <span className="truncate max-w-[120px]">{liveState?.error ? (liveState.error.toLowerCase().includes('rate limit') ? 'Rate Limited' : 'Connection Error') : 'API Connected'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Metrics & Animation */}
+            <div className="glass rounded-xl p-6 relative overflow-hidden group min-h-[160px] flex items-center justify-between">
+              {/* Background gradient glow */}
+              <div className="absolute inset-0 bg-app-accent/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
+
+              <div className="z-10 w-[55%] relative">
+                <div className="text-[10px] font-display uppercase tracking-[0.2em] text-zinc-500 mb-6 flex items-center gap-2">
+                  <i data-lucide="bar-chart-2" className="w-3.5 h-3.5 text-zinc-400"></i>
+                  Traffic Volume
+                </div>
+                {/* SVG Sparkline */}
+                <div className="relative">
+                  <svg className="w-full h-16 overflow-visible transition-all duration-300" viewBox="0 0 100 30" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="spark-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={isNodeError ? '#ef4444' : 'var(--accent)'} stopOpacity="0.4" />
+                        <stop offset="100%" stopColor={isNodeError ? '#ef4444' : 'var(--accent)'} stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path d={sparklineFill} fill="url(#spark-grad)" className="transition-all duration-300" />
+                    <path d={sparklineStroke} fill="none" stroke={isNodeError ? '#ef4444' : 'var(--accent)'} strokeWidth="1.5" className="transition-all duration-300" style={{ filter: `drop-shadow(0 0 5px ${isNodeError ? '#ef4444' : 'var(--accent)'})` }} />
+                    {/* Animated moving dot on the path */}
+                    <circle cx={lastPoint[0]} cy={lastPoint[1]} r="2" fill="#fff" className="drop-shadow-[0_0_5px_#fff] transition-all duration-300" />
+                  </svg>
+                </div>
+              </div>
+              
+              <div className="z-10 w-[40%] flex flex-col items-center justify-center relative">
+                {/* 3D Rotating Node Animation */}
+                <div className="relative w-24 h-24 perspective-1000">
+                  <div className={`w-full h-full absolute transform-style-preserve-3d ${isNodeActive ? 'animate-[spin_3s_linear_infinite]' : 'animate-[spin_10s_linear_infinite]'}`}>
+                    {/* Orbital Rings */}
+                    <div className={`absolute inset-0 border ${isNodeError ? 'border-red-500/40 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-app-accent/40 shadow-[0_0_15px_var(--accent-alpha-20)]'} rounded-full rotate-x-60 transition-colors duration-500`}></div>
+                    <div className={`absolute inset-0 border ${isNodeError ? 'border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-app-accent/20 shadow-[0_0_15px_var(--accent-alpha-20)]'} rounded-full rotate-y-60 transition-colors duration-500`}></div>
+                    {/* Core Sphere */}
+                    <div className={`absolute inset-5 bg-gradient-to-tr ${isNodeError ? 'from-red-500/10 to-red-500/40 shadow-[0_0_20px_rgba(239,68,68,0.5)] border-red-500/30' : 'from-app-accent/10 to-app-accent/40 shadow-[0_0_20px_var(--accent-alpha-50)] border-app-accent/30'} backdrop-blur-md rounded-full flex items-center justify-center border transition-colors duration-500`}>
+                      <div className={`w-2 h-2 bg-white rounded-full shadow-[0_0_15px_#fff] ${isNodeActive ? 'animate-ping' : 'animate-pulse'}`}></div>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 text-[9px] font-mono text-zinc-500 uppercase tracking-widest text-center bg-black/40 px-2 py-1 rounded border border-white/5 flex items-center gap-1.5">
+                  <span className={`${isNodeError ? 'text-red-500' : 'text-app-accent'} ${isNodeActive ? 'animate-pulse' : ''}`}>●</span> {nodeLabel}
+                </div>
+              </div>
+            </div>
+
+            {/* Middle Row: Telemetry */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+              <div className="glass rounded-xl p-4 flex flex-col justify-center relative overflow-hidden group">
+                <div className="text-[9px] font-display uppercase tracking-widest text-zinc-500 mb-1 relative z-10">Latency</div>
+                <div className="text-lg font-mono text-zinc-200 relative z-10 flex items-baseline gap-1">
+                  {liveState?.duration_ms ? liveState.duration_ms : '---'}<span className="text-[10px] text-zinc-600">ms</span>
+                </div>
+                <div className="absolute bottom-0 left-0 w-full h-[2px] bg-white/5 group-hover:bg-white/20 transition-colors"></div>
+              </div>
+              <div className="glass rounded-xl p-4 flex flex-col justify-center relative overflow-hidden group">
+                <div className="text-[9px] font-display uppercase tracking-widest text-zinc-500 mb-1 relative z-10">Events</div>
+                <div className="text-lg font-mono text-app-accent relative z-10 neon-text">{liveState?.events_seen ?? 0}</div>
+                <div className="absolute bottom-0 left-0 w-full h-[2px] bg-app-accent/20 group-hover:bg-app-accent/50 transition-colors"></div>
+              </div>
+              <div className="glass rounded-xl p-4 flex flex-col justify-center relative overflow-hidden group">
+                <div className="text-[9px] font-display uppercase tracking-widest text-zinc-500 mb-1 relative z-10">Req Tools</div>
+                <div className="text-lg font-mono text-zinc-300 relative z-10">{traceState?.request_tools_count ?? 0}</div>
+                <div className="absolute bottom-0 left-0 w-full h-[2px] bg-white/5 group-hover:bg-white/20 transition-colors"></div>
+              </div>
+              <div className="glass rounded-xl p-4 flex flex-col justify-center relative overflow-hidden group">
+                <div className="text-[9px] font-display uppercase tracking-widest text-zinc-500 mb-1 relative z-10">Res Tools</div>
+                <div className="text-lg font-mono text-zinc-300 relative z-10">{traceState?.response_tool_use_count ?? 0}</div>
+                <div className="absolute bottom-0 left-0 w-full h-[2px] bg-white/5 group-hover:bg-white/20 transition-colors"></div>
+              </div>
+            </div>
+
+            {/* Error Alert Widget (conditional) */}
+            {liveState?.error && (
+              <div className="rounded-xl overflow-hidden border border-red-500/30 bg-[#1a0505]/80 relative animate-[fade-up_0.3s_ease-out] shadow-[0_0_30px_rgba(239,68,68,0.1)] shrink-0 backdrop-blur-md">
+                  {/* Glowing left accent line */}
+                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500 shadow-[0_0_10px_#ef4444]"></div>
+                  
+                  <div className="border-b border-red-500/20 px-5 py-3 flex items-center justify-between bg-red-500/10">
+                      <div className="flex items-center gap-2">
+                          <i data-lucide="alert-triangle" className="w-4 h-4 text-red-400 animate-pulse"></i>
+                          <span className="text-[10px] font-display font-bold text-red-400 uppercase tracking-widest">System Alert</span>
+                      </div>
+                      <span className="text-[9px] font-mono text-red-400 uppercase tracking-widest bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20">Critical</span>
+                  </div>
+                  <div className="p-4 font-mono text-[11px] text-red-200/90 leading-relaxed max-h-[100px] overflow-y-auto">
+                      {liveState.error}
+                  </div>
+              </div>
+            )}
+
+            {/* Bottom: Detailed Diagnostics */}
+            <div className="glass rounded-xl flex-1 flex flex-col overflow-hidden min-h-[220px]">
+              <div className="bg-black/60 border-b border-white/10 px-5 py-3 backdrop-blur-md shrink-0 flex items-center justify-between">
+                <h3 className="text-[11px] font-display font-bold text-zinc-300 uppercase tracking-[0.15em] flex items-center gap-2">
+                  <i data-lucide="cpu" className="w-3.5 h-3.5 text-zinc-400"></i>
+                  Diagnostic Trace
+                </h3>
+                <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded border border-white/10">Live Data</span>
+              </div>
+              
+              <div className="p-4 overflow-y-auto font-mono text-[11px] space-y-0.5 bg-black/20 relative flex-1">
+                {/* Decorative background grid */}
+                <div className="absolute inset-0 opacity-[0.02] pointer-events-none" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between py-1.5 border-b border-white/5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600">auth.source</span>
+                    <span className="text-zinc-300">{authStatus?.runtime?.token_source || 'none'}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-white/5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600">auth.api_base</span>
+                    <span className="text-zinc-300 truncate max-w-[150px] text-right" title={authStatus?.runtime?.api_base}>{authStatus?.runtime?.api_base || 'default'}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-white/5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600">trace.model</span>
+                    <span className="text-app-accent">{traceState?.model || 'n/a'}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-white/5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600">trace.mode</span>
+                    <span className="text-zinc-300">{traceState?.mode || 'n/a'}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-white/5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600">trace.stream</span>
+                    <span className="text-zinc-300">{String(traceState?.stream ?? 'n/a')}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-white/5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600">last_event</span>
+                    <span className="text-zinc-300">{liveState?.last_event_type || 'n/a'}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 group hover:bg-white/[0.02] transition-colors px-2 -mx-2 rounded">
+                    <span className="text-zinc-600 shrink-0">trace.note</span>
+                    <span className="text-zinc-300 truncate max-w-[200px] text-right" title={traceState?.note || 'n/a'}>{traceState?.note || 'n/a'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* C: Full-width logs */}
+          <div className="glass rounded-2xl overflow-hidden area-logs flex flex-col h-full">
+            <div className="bg-black/60 border-b border-white/10 px-6 py-4 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <h2 className="text-xs font-display font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2 shrink-0">
+                <i data-lucide="terminal" className="w-4 h-4 text-zinc-400"></i>
+                Terminal Output
+                <span className="text-[10px] font-mono normal-case text-zinc-500 ml-2 bg-black/40 px-2 py-0.5 rounded border border-white/5">
+                  {visibleLogs.length} / {logEvents.length}
+                </span>
+              </h2>
+
+              <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full sm:w-auto">
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
+                  {filterChips.map((chip) => {
+                    const enabled = logFilters[chip.key];
+                    return (
+                      <button
+                        key={chip.key}
+                        onClick={() => toggleFilter(chip.key)}
+                        className={`inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded transition-colors border ${enabled ? 'bg-white/10 text-white border-white/20' : 'bg-transparent text-zinc-600 border-transparent hover:text-zinc-400 hover:border-white/10'}`}
+                      >
+                        {chip.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="h-4 w-px bg-white/10 hidden sm:block"></div>
+
+                <div className="flex items-center gap-2 ml-auto sm:ml-0">
+                  <button
+                    onClick={() => setLogsPaused((v) => !v)}
+                    className={`mono-btn rounded-md px-3 py-1.5 text-[10px] shrink-0 border transition-colors flex items-center gap-1.5 ${logsPaused ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-black/40 text-zinc-400 border-white/10 hover:text-white hover:bg-white/5'}`}
+                  >
+                    {logsPaused ? <i data-lucide="play" className="w-3 h-3"></i> : <i data-lucide="pause" className="w-3 h-3"></i>}
+                    {logsPaused ? 'Resume' : 'Pause'}
+                  </button>
+
+                  <button
+                    onClick={() => setLogEvents([])}
+                    className="shrink-0 p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors border border-transparent hover:border-red-500/20"
+                    title="Clear logs"
+                  >
+                    <i data-lucide="trash-2" className="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-[400px] lg:flex-1 lg:min-h-[400px] overflow-y-auto bg-[#030303] p-4 font-mono text-[11px] shadow-inner relative">
+              {/* Scanlines overlay for terminal */}
+              <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ background: 'repeating-linear-gradient(0deg, #000, #000 1px, transparent 1px, transparent 2px)' }}></div>
+
+              {visibleLogs.length === 0 ? (
+                <div className="text-zinc-600 flex items-center justify-center h-20 opacity-50 relative z-10">
+                  <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-app-accent rounded-full animate-pulse"></div> Waiting for signals...</span>
+                </div>
+              ) : (
+                <div className="space-y-1 relative z-10">
+                  {[...visibleLogs].reverse().map((entry) => {
+                    let levelColor = "text-zinc-300";
+                    let rowBg = "";
+                    if (entry.level === 'error') {
+                      levelColor = "text-red-400";
+                      rowBg = "bg-red-500/[0.02] border-l-red-500/50";
+                    } else if (entry.level === 'debug') {
+                      levelColor = "text-zinc-500";
+                    } else if (entry.level === 'info') {
+                      levelColor = "text-app-accent";
+                    }
+
+                    return (
+                      <div key={entry.id} className={`terminal-log-line flex items-start gap-3 ${rowBg}`}>
+                        <span className="text-zinc-600 shrink-0 w-24">[{entry.ts}]</span>
+                        <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-3 flex-1 min-w-0">
+                          <div className="flex gap-2 shrink-0">
+                            <span className={`${levelColor} font-bold uppercase w-[50px]`}>{entry.level}</span>
+                            {entry.type && <span className="text-zinc-600 w-[60px] lowercase">[{entry.type}]</span>}
+                          </div>
+                          <span className={`${entry.level === 'error' ? 'text-red-300' : 'text-zinc-300'} break-words leading-relaxed`}>{entry.message}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          </div>
+        </>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

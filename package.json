@@ -1,6 +1,6 @@
 {
   "name": "@ace-ify/copilot-claude-proxy",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "description": "Local compatibility proxy that accepts Anthropic-style POST /v1/messages calls and forwards them to GitHub Copilot's OpenAI-compatible endpoint. Ideal for using Claude Code with Copilot models.",
   "main": "src/server.js",

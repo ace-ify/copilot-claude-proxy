@@ -14,10 +14,12 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "100mb" }));
 
 const PORT = Number(process.env.PORT || 2169);
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "gpt-5.3-codex";
+const AUTO_MODEL_ID = "auto";
+const AUTO_UPSTREAM_MODEL = process.env.AUTO_UPSTREAM_MODEL || "";
 const COPILOT_BASE_URL = (process.env.COPILOT_BASE_URL || "https://api.githubcopilot.com").replace(/\/$/, "");
 const COPILOT_CHAT_PATH = process.env.COPILOT_CHAT_PATH || "/chat/completions";
 const COPILOT_MESSAGES_PATH = process.env.COPILOT_MESSAGES_PATH || "/v1/messages";
@@ -50,7 +52,7 @@ const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
 const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_COPILOT_API_KEY_URL = "https://api.github.com/copilot_internal/v2/token";
 const GITHUB_COPILOT_OAUTH_CLIENT_ID = process.env.GITHUB_COPILOT_OAUTH_CLIENT_ID || "Iv1.b507a08c87ecfe98";
-const ADMIN_MODEL_ALLOWLIST = (process.env.ADMIN_MODEL_ALLOWLIST || "gpt-5.3-codex,gpt-5.4-mini,gemini-3.1-pro-preview")
+const ADMIN_MODEL_ALLOWLIST = (process.env.ADMIN_MODEL_ALLOWLIST || "auto,gpt-5.3-codex,gpt-5.4-mini,gemini-3.1-pro-preview")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -127,7 +129,7 @@ function getCopilotApiBase() {
   return runtimeCopilotApiBase || COPILOT_BASE_URL;
 }
 
-const ARG_STREAM_STALL_EVENT_THRESHOLD = Number(process.env.ARG_STREAM_STALL_EVENT_THRESHOLD || 600);
+const ARG_STREAM_STALL_EVENT_THRESHOLD = Number(process.env.ARG_STREAM_STALL_EVENT_THRESHOLD || 10000);
 const ARG_STREAM_STALL_RETRY_LIMIT = Number(process.env.ARG_STREAM_STALL_RETRY_LIMIT || 1);
 
 function setLastBridgeTrace(patch) {
@@ -524,7 +526,144 @@ function buildCopilotHeaders(extraHeaders = {}) {
   return headers;
 }
 
+function isAutoModel(model) {
+  return String(model || "").toLowerCase() === AUTO_MODEL_ID;
+}
+
+// ── Auto Model Session (Copilot's real auto-intent API) ──────────────────────
+const AUTO_API_VERSION = "2025-07-16";
+
+let autoSessionCache = {
+  session: null,
+  expiresAt: 0
+};
+
+async function getAutoSession() {
+  const now = Math.floor(Date.now() / 1000);
+  // Return cached session if still valid (with 60s buffer)
+  if (autoSessionCache.session && autoSessionCache.expiresAt > now + 60) {
+    return autoSessionCache.session;
+  }
+
+  const apiBase = getCopilotApiBase();
+  const response = await fetch(`${apiBase}/models/session`, {
+    method: "POST",
+    headers: buildCopilotHeaders({ "X-GitHub-Api-Version": AUTO_API_VERSION }),
+    body: JSON.stringify({ auto_mode: { enabled: true } })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    console.error(`[auto] Failed to create auto session: ${response.status} ${errText}`);
+    return autoSessionCache.session; // return stale session if available
+  }
+
+  const session = await response.json();
+  autoSessionCache = {
+    session,
+    expiresAt: session.expires_at || now + 3600
+  };
+
+  console.log(
+    `[auto] Session created: selected=${session.selected_model}, ` +
+    `pool=[${(session.available_models || []).join(", ")}], ` +
+    `expires_at=${session.expires_at}`
+  );
+
+  return session;
+}
+
+async function resolveAutoIntentModel(session, promptText) {
+  // Use the intent endpoint for per-turn model routing
+  if (!session?.session_token || !promptText) {
+    return session?.selected_model || DEFAULT_MODEL;
+  }
+
+  try {
+    const apiBase = getCopilotApiBase();
+    const response = await fetch(`${apiBase}/models/session/intent`, {
+      method: "POST",
+      headers: buildCopilotHeaders({
+        "X-GitHub-Api-Version": AUTO_API_VERSION,
+        "Copilot-Session-Token": session.session_token
+      }),
+      body: JSON.stringify({
+        prompt: promptText,
+        available_models: session.available_models || []
+      })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      const intentModel = result.model || result.selected_model || result.recommended_model;
+      if (intentModel) {
+        console.log(`[auto] Intent routing: "${promptText.slice(0, 60)}..." → ${intentModel}`);
+        return intentModel;
+      }
+    }
+  } catch (e) {
+    console.error(`[auto] Intent routing failed: ${e.message}`);
+  }
+
+  // Fallback to session's selected model
+  return session?.selected_model || DEFAULT_MODEL;
+}
+
+function extractPromptFromPayload(payload) {
+  // Extract the last user message text for intent classification
+  if (!Array.isArray(payload?.messages)) return "";
+  for (let i = payload.messages.length - 1; i >= 0; i--) {
+    const msg = payload.messages[i];
+    if (msg?.role !== "user") continue;
+    if (typeof msg.content === "string") return msg.content;
+    if (Array.isArray(msg.content)) {
+      const textBlock = msg.content.find((b) => b?.type === "text" && typeof b.text === "string");
+      if (textBlock) return textBlock.text;
+    }
+  }
+  return "";
+}
+
+async function resolveAutoUpstreamModel(payload) {
+  // If explicit override is set, always use it
+  if (AUTO_UPSTREAM_MODEL) {
+    return AUTO_UPSTREAM_MODEL;
+  }
+
+  try {
+    const session = await getAutoSession();
+    if (!session) {
+      console.error("[auto] No session available, falling back to default model");
+      return DEFAULT_MODEL;
+    }
+
+    // Try per-turn intent routing with the user's prompt
+    const prompt = extractPromptFromPayload(payload);
+    if (prompt) {
+      return resolveAutoIntentModel(session, prompt);
+    }
+
+    // No prompt available — use session's default selection
+    return session.selected_model || DEFAULT_MODEL;
+  } catch (e) {
+    console.error(`[auto] resolveAutoUpstreamModel error: ${e.message}`);
+    return DEFAULT_MODEL;
+  }
+}
+
 function resolveCopilotInitiator(model, payload) {
+  // Auto mode: infer from payload context
+  if (isAutoModel(model)) {
+    const hasTools = Array.isArray(payload?.tools) && payload.tools.length > 0;
+    if (hasTools) {
+      return "agent";
+    }
+    const hasAssistantOrToolHistory = Array.isArray(payload?.messages)
+      ? payload.messages.some((m) => m?.role === "assistant" || m?.role === "tool")
+      : false;
+    return hasAssistantOrToolHistory ? "agent" : "user";
+  }
+
   if (FORCE_AGENT_MODEL_REGEX?.test(model)) {
     return "agent";
   }
@@ -610,6 +749,11 @@ async function getCopilotModels() {
 }
 
 async function resolveUpstreamMode(model) {
+  // Auto mode defaults to responses API — best for Copilot's dynamic routing
+  if (isAutoModel(model)) {
+    return "responses";
+  }
+
   const endpointMap = await getCopilotModelEndpointMap();
   const endpoints = endpointMap.get(model) || [];
   if (endpoints.includes("/responses")) {
@@ -637,9 +781,7 @@ function buildResponsesRequest(payload) {
   const mappedToolChoice = mapToolChoiceForResponses(payload.tool_choice);
   const inferredToolChoice =
     Array.isArray(tools) && tools.length > 0
-      ? tools.length > 8
-        ? "auto"
-        : DEFAULT_RESPONSES_TOOL_CHOICE_WITH_TOOLS
+      ? DEFAULT_RESPONSES_TOOL_CHOICE_WITH_TOOLS
       : undefined;
   const toolChoice = mappedToolChoice || inferredToolChoice;
 
@@ -712,6 +854,11 @@ function functionCallArgumentsFromItem(item) {
 function normalizeToolInput(toolName, input) {
   let next = input && typeof input === "object" ? { ...input } : {};
 
+  // Unwrap {tool_input: {...}} wrapper (some Codex models use this)
+  if (next.tool_input && typeof next.tool_input === "object" && Object.keys(next).length === 1) {
+    next = { ...next.tool_input };
+  }
+
   if (next.input && typeof next.input === "object" && Object.keys(next).length === 1) {
     next = { ...next.input };
   }
@@ -727,6 +874,26 @@ function normalizeToolInput(toolName, input) {
 
   if (next.params && typeof next.params === "object" && Object.keys(next).length === 1) {
     next = { ...next.params };
+  }
+
+  // Unwrap {properties: {...}} wrapper (responses API nesting artifact)
+  if (next.properties && typeof next.properties === "object" && Object.keys(next).length === 1) {
+    next = { ...next.properties };
+  }
+
+  // Unwrap {function: {arguments: ...}} nested wrapper
+  if (next.function && typeof next.function === "object" && Object.keys(next).length === 1) {
+    const fn = next.function;
+    if (fn.arguments !== undefined) {
+      const fnArgs = fn.arguments;
+      if (fnArgs && typeof fnArgs === "object") {
+        next = { ...fnArgs };
+      } else if (typeof fnArgs === "string") {
+        next = parseJsonLoose(fnArgs, { raw: fnArgs });
+      }
+    } else {
+      next = { ...fn };
+    }
   }
 
   if (toolName === "Task") {
@@ -1077,6 +1244,8 @@ function applyProxyEnv(env, modelOverride) {
   env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${PORT}`;
   env.ANTHROPIC_API_KEY = CLAUDE_PROXY_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
+  // For auto mode, we use 'auto' as the model name — the proxy intercepts it
+  // and lets Copilot's API decide the actual model at request time
   env.ANTHROPIC_MODEL = targetModel;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = targetModel;
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = targetModel;
@@ -1142,10 +1311,12 @@ async function getSwitchStatus() {
   const settings = await getClaudeSettings();
   const state = await readJsonFileSafe(CLAUDE_PROXY_STATE_PATH, null);
   const env = settings?.env || {};
+  const selectedModel = env.ANTHROPIC_MODEL || null;
 
   return {
     mode: state?.mode === "proxy" ? "proxy" : "native",
-    selected_model: env.ANTHROPIC_MODEL || null,
+    selected_model: selectedModel,
+    is_auto_mode: isAutoModel(selectedModel),
     settings_path: CLAUDE_SETTINGS_PATH,
     bridge_url: `http://127.0.0.1:${PORT}`,
     current_env: Object.fromEntries(CLAUDE_ENV_KEYS.filter((key) => key in env).map((key) => [key, env[key]]))
@@ -1363,16 +1534,29 @@ function emitMappedAnthropicSse(res, mapped) {
 }
 
 async function proxyStreaming(payload, res, initiator) {
-  const upstreamBody = cleanUndefined(buildOpenAiRequest({ ...payload, stream: true }));
-  const upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_CHAT_PATH}`, {
-    method: "POST",
-    headers: buildCopilotHeaders({ "x-initiator": initiator }),
-    body: JSON.stringify(upstreamBody)
-  });
+  let model = payload.model || DEFAULT_MODEL;
+  let upstreamBody;
+  let upstreamResponse;
+  
+  for (let attempt = 0; attempt < 2; attempt++) {
+    upstreamBody = cleanUndefined(buildOpenAiRequest({ ...payload, model, stream: true }));
+    upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_CHAT_PATH}`, {
+      method: "POST",
+      headers: buildCopilotHeaders({ "x-initiator": initiator }),
+      body: JSON.stringify(upstreamBody)
+    });
+
+    if (!upstreamResponse.ok && payload._isAuto && upstreamResponse.status === 429 && model !== "claude-haiku-4.5" && attempt === 0) {
+      console.log(`[routing] Hit rate limit on ${model}, auto-falling back to claude-haiku-4.5`);
+      model = "claude-haiku-4.5";
+      continue;
+    }
+    break;
+  }
 
   if (!upstreamResponse.ok || !upstreamResponse.body) {
     const errText = await upstreamResponse.text();
-    setLastBridgeTrace({ note: "chat stream upstream error" });
+    setLastBridgeTrace({ note: `chat stream upstream error: ${errText}` });
     endLiveBridgeState({ note: "chat stream upstream error", error: errText || "upstream error" });
     return res.status(upstreamResponse.status).json({
       error: {
@@ -1387,7 +1571,6 @@ async function proxyStreaming(payload, res, initiator) {
   res.setHeader("Connection", "keep-alive");
 
   const messageId = createId("msg");
-  const model = upstreamBody.model || DEFAULT_MODEL;
   let textBlockIndex = null;
   let nextContentIndex = 0;
   let textOutputTokens = 0;
@@ -1611,25 +1794,37 @@ async function proxyStreaming(payload, res, initiator) {
 }
 
 async function proxyStreamingMessages(payload, res, initiator) {
-  const model = payload.model || DEFAULT_MODEL;
-  const upstreamBody = {
-    ...payload,
-    model,
-    stream: true
-  };
+  let model = payload.model || DEFAULT_MODEL;
+  let upstreamBody;
+  let upstreamResponse;
 
-  const upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_MESSAGES_PATH}`, {
-    method: "POST",
-    headers: buildCopilotHeaders({
-      "x-initiator": initiator,
-      "anthropic-version": COPILOT_ANTHROPIC_VERSION
-    }),
-    body: JSON.stringify(upstreamBody)
-  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    upstreamBody = {
+      ...payload,
+      model,
+      stream: true
+    };
+
+    upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_MESSAGES_PATH}`, {
+      method: "POST",
+      headers: buildCopilotHeaders({
+        "x-initiator": initiator,
+        "anthropic-version": COPILOT_ANTHROPIC_VERSION
+      }),
+      body: JSON.stringify(upstreamBody)
+    });
+
+    if (!upstreamResponse.ok && payload._isAuto && upstreamResponse.status === 429 && model !== "claude-haiku-4.5" && attempt === 0) {
+      console.log(`[routing] Hit rate limit on ${model}, auto-falling back to claude-haiku-4.5`);
+      model = "claude-haiku-4.5";
+      continue;
+    }
+    break;
+  }
 
   if (!upstreamResponse.ok || !upstreamResponse.body) {
     const errText = await upstreamResponse.text();
-    setLastBridgeTrace({ note: "messages stream upstream error" });
+    setLastBridgeTrace({ note: `messages stream upstream error: ${errText}` });
     endLiveBridgeState({ note: "messages stream upstream error", error: errText || "upstream error" });
     return res.status(upstreamResponse.status).json({
       error: {
@@ -1661,31 +1856,68 @@ async function proxyStreamingMessages(payload, res, initiator) {
 }
 
 async function proxyStreamingResponses(payload, res, initiator) {
-  const model = payload.model || DEFAULT_MODEL;
+  let model = payload.model || DEFAULT_MODEL;
 
   if (Array.isArray(payload.tools) && payload.tools.length > 0) {
-    const requestBody = cleanUndefined(buildResponsesRequest({ ...payload, model, stream: false }));
-    const upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_RESPONSES_PATH}`, {
-      method: "POST",
-      headers: buildCopilotHeaders({ "x-initiator": initiator }),
-      body: JSON.stringify(requestBody)
-    });
+    let mapped;
+    let bufferedRetries = 0;
+    const MAX_BUFFERED_RETRIES = 1;
 
-    const { rawText, parsed } = await readUpstreamJsonResponse(upstreamResponse);
+    while (true) {
+      const isRetry = bufferedRetries > 0;
+      const retryPayload = { ...payload, model, stream: false };
+      // Note: we no longer strip tools on retry
+      const requestBody = cleanUndefined(buildResponsesRequest(retryPayload));
 
-    if (!upstreamResponse.ok) {
-      const errMessage = getUpstreamErrorMessage(parsed, rawText, "Upstream request failed");
-      setLastBridgeTrace({ note: `responses buffered upstream error: ${errMessage}` });
-      endLiveBridgeState({ note: "responses buffered upstream error", error: errMessage });
-      return res.status(upstreamResponse.status).json({
-        error: {
-          type: "upstream_error",
-          message: errMessage
+      const upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_RESPONSES_PATH}`, {
+        method: "POST",
+        headers: buildCopilotHeaders({ "x-initiator": initiator }),
+        body: JSON.stringify(requestBody)
+      });
+
+      const { rawText, parsed } = await readUpstreamJsonResponse(upstreamResponse);
+
+      if (!upstreamResponse.ok) {
+        const errMessage = getUpstreamErrorMessage(parsed, rawText, "Upstream request failed");
+        
+        // Auto mode rate limit fallback
+        if (payload._isAuto && upstreamResponse.status === 429 && model !== "claude-haiku-4.5" && bufferedRetries < MAX_BUFFERED_RETRIES) {
+          console.log(`[routing] Hit rate limit on ${model}, auto-falling back to claude-haiku-4.5`);
+          model = "claude-haiku-4.5";
+          bufferedRetries++;
+          continue;
         }
+
+        setLastBridgeTrace({ note: `responses buffered upstream error: ${errMessage}` });
+        endLiveBridgeState({ note: "responses buffered upstream error", error: errMessage });
+        return res.status(upstreamResponse.status).json({
+          error: {
+            type: "upstream_error",
+            message: errMessage
+          }
+        });
+      }
+
+      mapped = buildAnthropicResponseFromResponses(parsed, model);
+
+      // Check if upstream returned actionable content
+      const hasContent = Array.isArray(mapped.content) && mapped.content.length > 0;
+
+      if (hasContent || bufferedRetries >= MAX_BUFFERED_RETRIES) {
+        break;
+      }
+
+      // Empty response — retry without tools to get a text-only fallback
+      bufferedRetries++;
+      setLastBridgeTrace({
+        note: `responses buffered empty content, retrying without tools (attempt=${bufferedRetries})`
       });
     }
 
-    const mapped = buildAnthropicResponseFromResponses(parsed, model);
+      // Final guard: check if content is empty
+      if (!Array.isArray(mapped.content) || mapped.content.length === 0) {
+        setLastBridgeTrace({ note: "responses buffered empty content (no fallback injected)" });
+      }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -1701,7 +1933,7 @@ async function proxyStreamingResponses(payload, res, initiator) {
             .filter((c) => c?.type === "text" && typeof c.text === "string")
             .reduce((n, c) => n + c.text.length, 0)
         : 0,
-      note: `responses buffered->sse mapped (stop_reason=${mapped?.stop_reason || "end_turn"})`
+      note: `responses buffered->sse mapped (stop_reason=${mapped?.stop_reason || "end_turn"}, retries=${bufferedRetries})`
     });
     endLiveBridgeState({ note: "responses buffered stream completed" });
     res.end();
@@ -1712,15 +1944,7 @@ async function proxyStreamingResponses(payload, res, initiator) {
   let retries = 0;
 
   while (true) {
-    const shouldKeepTools = retries === 0;
-    const requestBody = shouldKeepTools
-      ? upstreamBody
-      : cleanUndefined({
-          ...upstreamBody,
-          tools: undefined,
-          tool_choice: undefined,
-          input: [{ role: "user", content: "Continue and answer without tool calls." }, ...(upstreamBody.input || [])]
-        });
+    const requestBody = upstreamBody;
 
     const upstreamResponse = await fetch(`${getCopilotApiBase()}${COPILOT_RESPONSES_PATH}`, {
       method: "POST",
@@ -2118,6 +2342,26 @@ app.get("/healthz", (req, res) => {
     upstream_models: `${getCopilotApiBase()}${COPILOT_MODELS_PATH}`
   });
 });
+
+app.get("/admin/models/raw", async (req, res) => {
+  try {
+    await ensureCopilotAuthReady();
+    const response = await fetch(`${getCopilotApiBase()}${COPILOT_MODELS_PATH}`, {
+      headers: buildCopilotHeaders()
+    });
+    const data = await response.json();
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({
+      error: {
+        type: "internal_error",
+        message: error instanceof Error ? error.message : "Unexpected error"
+      }
+    });
+  }
+});
+
+
 
 app.get("/admin", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -2523,6 +2767,18 @@ app.get("/admin/models", async (req, res) => {
 
     const byId = new Map(discovered.map((m) => [m.id, m]));
     const models = ADMIN_MODEL_ALLOWLIST.map((id) => {
+      // Auto is a virtual model — always available, not discovered from upstream
+      if (isAutoModel(id)) {
+        return {
+          id: AUTO_MODEL_ID,
+          name: "Auto (Dynamic Routing)",
+          vendor: "GitHub Copilot",
+          model_picker_enabled: true,
+          discovered: true,
+          is_auto: true,
+          supported_endpoints: ["/responses", "/chat/completions"]
+        };
+      }
       const found = byId.get(id);
       if (found) {
         return found;
@@ -2535,7 +2791,12 @@ app.get("/admin/models", async (req, res) => {
         discovered: false,
         supported_endpoints: []
       };
-    }).sort((a, b) => a.id.localeCompare(b.id));
+    }).sort((a, b) => {
+      // Pin auto to the top
+      if (isAutoModel(a.id)) return -1;
+      if (isAutoModel(b.id)) return 1;
+      return a.id.localeCompare(b.id);
+    });
 
     const status = await getSwitchStatus();
     return res.json({
@@ -2589,13 +2850,16 @@ app.post("/v1/messages", async (req, res) => {
     await ensureCopilotAuthReady();
     const payload = req.body || {};
     const requestId = createId("req");
-    const model = payload.model || DEFAULT_MODEL;
-    const mode = await resolveUpstreamMode(model);
-    const initiator = resolveCopilotInitiator(model, payload);
+    const rawModel = payload.model || DEFAULT_MODEL;
+    const autoMode = isAutoModel(rawModel);
+    const model = autoMode ? (await resolveAutoUpstreamModel(payload)) : rawModel;
+    const mode = await resolveUpstreamMode(autoMode ? model : rawModel);
+    const initiator = resolveCopilotInitiator(rawModel, payload);
     startLiveBridgeState({ requestId, model, mode, stream: Boolean(payload.stream) });
     setLastBridgeTrace({
       model,
       mode,
+      auto_mode: autoMode,
       stream: Boolean(payload.stream),
       request_tools_count: Array.isArray(payload.tools) ? payload.tools.length : 0,
       request_tool_choice: payload.tool_choice || null,
@@ -2625,12 +2889,12 @@ app.post("/v1/messages", async (req, res) => {
     if (payload.stream) {
       res.setHeader("x-bridge-mode", mode);
       if (mode === "responses") {
-        return await proxyStreamingResponses({ ...payload, model }, res, initiator);
+        return await proxyStreamingResponses({ ...payload, model, _isAuto: autoMode }, res, initiator);
       }
       if (mode === "messages") {
-        return await proxyStreamingMessages({ ...payload, model }, res, initiator);
+        return await proxyStreamingMessages({ ...payload, model, _isAuto: autoMode }, res, initiator);
       }
-      return await proxyStreaming({ ...payload, model }, res, initiator);
+      return await proxyStreaming({ ...payload, model, _isAuto: autoMode }, res, initiator);
     }
 
     if (mode === "responses") {
@@ -2654,6 +2918,12 @@ app.post("/v1/messages", async (req, res) => {
         });
       }
       const mapped = buildAnthropicResponseFromResponses(parsed, model);
+
+      // Guard: check if upstream returned empty content
+      if (!Array.isArray(mapped.content) || mapped.content.length === 0) {
+        setLastBridgeTrace({ note: "responses non-stream empty content (no fallback injected)" });
+      }
+
       const stopReason = mapped?.stop_reason || "end_turn";
       setLastBridgeTrace({
         response_tool_use_count: Array.isArray(mapped.content)
@@ -2821,6 +3091,9 @@ const server = app.listen(PORT, "127.0.0.1", () => {
   console.log(border);
   console.log("");
 });
+
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 120500;
 
 async function gracefulShutdown() {
   console.log("\n[proxy] Received shutdown signal...");
